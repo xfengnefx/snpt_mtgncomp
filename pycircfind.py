@@ -40,7 +40,7 @@ class node:
     def add_arc(self, targetID:str, targetStrand:str, l:int):
         targetName = targetID+targetStrand
         if targetName in self.arc:
-            print('[W] trying to add duplicated arc, ignore:', self.ID, targetName)
+            print('[W] trying to add duplicated arc, ignore:', self.name, targetName)
         else:
             self.arc[targetName] = l
     def has_child(self):
@@ -215,4 +215,4 @@ if __name__=='__main__':
     g.build_from_gfa(args.f_in)
     n = g.do_circle_finding(args.f_out)
     Td = '%.1fs'%(time()-T)
-    print(f'[M] reported {n} circles from {args.f_in}. (Td)')
+    print(f'[M] reported {n} circles from {args.f_in}. {Td}')
