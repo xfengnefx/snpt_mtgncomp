@@ -4,9 +4,11 @@ example_text = '''example:
    python {0} contiglens.tsv asm.rescue.fa.gz /path/metabat2
    python {0} contiglens.tsv <(zcat asm*.fa.gz) /path/metabat2'''.format(os.path.basename(__file__))
 
-parser = argparse.ArgumentParser(description="Merge rescued circles and genome binner bins, write to stdout or specified file.",
-                                epilog=example_text,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+parser = argparse.ArgumentParser(description="Merge rescued circles and genome binner bins"+\
+" from traditional binner. Write a tab-delimited text file to stdout or specified file.",
+                 epilog=example_text,
+                 formatter_class=argparse.RawDescriptionHelpFormatter)
+
 parser.add_argument('-x', type=str, default='fa', help='file suffix of binner bins, e.g. use fa for *.fa files. Ignored if files instead of a directory are specified.')
 parser.add_argument('-o', type=str, default='', help='write output to this file instead of stdout')
 parser.add_argument('fn_contigl_tsv', type=str, help='a tab-delimited file. col1=contig names, col2=contig lengths.')
@@ -21,12 +23,14 @@ from time import time
 
 
 
-accept_list = {}  # [type, size, n_contigs, contignames]
-blacklist = set()
-bin2tig = {}
-reject = []
-ll = {}  # tig2len
-long_linear_contigs = set()
+accept_list = {}     # in each entry: [type, size, n_contigs, contignames]
+blacklist = set()    # remembers what contigs have been used
+bin2tig = {}         # key=bin name, value=a list of contig names belong to that bin
+reject = []          # (for sancheck)
+ll = {}              # tig2len
+long_linear_contigs = set()  # (for sancheck)
+
+
 
 # collect contig lengths
 T = time()
@@ -36,10 +40,10 @@ with open(args.fn_contigl_tsv) as file:
         l = int(l)
         qnshort = qn.split('.')[1]
         ll[qn] = l
-
 sys.stderr.write('[M] prepare done. %.1fs\n'%(time()-T))
 
-# record rescued circles
+# collect rescued circles:
+#   all are accepted; also mark all of their contigs as used
 T = time()
 with open(args.fn_rescue_fasta) as file:
     for name, seq, qual in readfq(file, get_full_name=True):
@@ -53,7 +57,7 @@ with open(args.fn_rescue_fasta) as file:
             blacklist.add(tig)
 sys.stderr.write(f'[M] accept rescue circles: {len(accept_list)} (%.1fs)\n'%(time()-T))
 
-# record binner bins
+# parse binner directory or a list of filesfiles
 T = time()
 def yield_binner_streams(fns, suffix='fa'):
     n = 0
@@ -62,7 +66,7 @@ def yield_binner_streams(fns, suffix='fa'):
         if os.path.isfile(fn):
             yield fn, opener(fn)
             n+=1
-        elif os.path.isdir(fn):
+        elif os.path.isdir(fn):  # need to iterate over files in the directory
             for f in os.listdir(fn):
                 if f.endswith(suffix):
                     ff = os.path.join(fn,f)
@@ -79,23 +83,30 @@ def yield_binner_streams(fns, suffix='fa'):
     sys.stderr.write(f'[M] processed {n} files ({nskip} ignored) from binner\n')
 for b, stream in yield_binner_streams(args.binner):
     tigs = []
+
+    # collect names of the bin's contigs
     for qname, seq, qual in readfq(stream):
         tigs.append(qname)
+
+    # skip empty bin, if any
     if len(tigs)>0:
         bin2tig[b] = tigs
     else:
         continue
 
+    # ignore binner bins that are too small or huge
+    # this is for reducing checkM runtime.
     binsize = sum([ll[tig] for tig in tigs])
     if binsize<500000 or binsize>10000000:
         reject.append(b)
         continue
 
+    # check redundancy
     used = [_ for _ in tigs if _ in blacklist]
     used_bp = sum([ll[tig] for tig in used])
-    if used_bp>1e6 or len(used)>10:
+    if used_bp>1e6 or len(used)>10:  # conflicts with circle rescue. ignore binner bin
         reject.append(b)
-    else:
+    else:                            # take the binner bin
         for tig in tigs:
             blacklist.add(tig)
         accept_list[b] = ['binner', binsize, len(tigs), ','.join(tigs)]
@@ -115,5 +126,3 @@ for b in accept_list:
     file_out.write('\t'.join(tmp)+'\n')
 if args.o!='':
     file_out.close()
-
-
